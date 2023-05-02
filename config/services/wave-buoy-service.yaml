@@ -1,0 +1,30 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: 'ricardo-sandbox-wave-buoy-{stage}'
+spec:
+  template:
+    
+    spec:
+      
+      
+      containers:
+        - image: gcr.io/oceanum-registry/ricardo-sandbox-app:main
+          name: user-container
+          
+          livenessProbe:
+            httpGet: 
+              path: /healthz
+              port: 8501
+              scheme: HTTP
+          readinessProbe:
+            httpGet: 
+              path: /healthz
+              port: 8501
+              scheme: HTTP
+            successThreshold: 1
+          ports:
+            - containerPort: 8501
+              # protocol needed for Knative defaults as well
+              protocol: TCP
+          command: ['streamlit', 'run', 'app/wave_buoy.py', '--server.enableCORS=False']

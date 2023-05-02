@@ -1,0 +1,41 @@
+alerts: {}
+configmaps: {}
+defaults:
+  ricardo-sandbox:
+    configmaps: []
+    pod:
+      container:
+        env: []
+        image: gcr.io/oceanum-registry/ricardo-sandbox-app:main
+        mounts: {}
+        resources: {}
+      metadata: {}
+      nodeSelector: {}
+      serviceAccountName: default
+      tolerations: []
+      volumes: {}
+    secrets: []
+    stage_deploy_ref: main
+pipelines: {}
+project:
+  argocd_application_namespace: knative-services
+  argocd_config_repo_url: https://gitlab.com/oceanum/config/streamlit-apps.git
+  argocd_project_name: streamlit-apps
+  argocd_server_namespace: argocd
+  config_rootdir: knative-services
+  dpm_commit_ref: None
+  dpm_version: 0+unknown
+  image_repository: gcr.io/oceanum-registry
+  last_applied_migration: None
+  name: ricardo-sandbox
+  project_name_suffix: -app
+  source_dir: app
+secrets: {}
+services:
+  wave-buoy:
+    command: null
+    configmaps: []
+    script: app/wave_buoy.py
+    secrets: []
+stages: {}
+tasks: {}

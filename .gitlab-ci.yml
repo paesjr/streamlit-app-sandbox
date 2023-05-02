@@ -1,0 +1,150 @@
+stages:
+  - build
+  - test
+  - deploy
+
+variables:
+  IMAGE: 'gcr.io/oceanum-registry/ricardo-sandbox-app:$CI_COMMIT_REF_NAME'
+
+.rules-src-tag-config-change: &rules-src-tag-config-change
+  rules:
+    # Any version tags
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+    # Any env/config/src changes on branch push
+    - if: '$CI_COMMIT_TAG != $CI_COMMIT_REF_NAME'
+      changes:
+        - app/**/*
+        - config/**/*
+        - .gitlab-ci.yml
+        - requirements.txt
+        - Dockerfile
+
+.rules-src-or-tag-change: &rules-src-or-tag-change
+  rules:
+    # Any version tags
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+    # Any env/src changes on branch push
+    - if: '$CI_COMMIT_TAG != $CI_COMMIT_REF_NAME'
+      changes:
+        - app/**/*
+        - .gitlab-ci.yml
+        - requirements.txt
+        - Dockerfile
+
+.rules-not-tag: &rules-not-tag
+  rules:
+    - if: '$CI_COMMIT_TAG != $CI_COMMIT_REF_NAME'
+
+.docker-job: &docker-job
+  image: docker:20.10.16
+  services:
+    - name: docker:20.10.16-dind
+      alias: docker
+  before_script:
+    - while ! docker ps; do sleep 1; done;
+  tags: 
+    - oceanum-dev-runner
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: "tcp://docker:2375"
+    DOCKER_DRIVER: "overlay2"
+
+build:image:
+  <<: *docker-job
+  <<: *rules-src-or-tag-change
+  stage: build
+  artifacts:
+    reports:
+      dotenv: image.env
+  script: |
+    set -e
+    docker build --build-arg GITLAB_TOKEN=$CI_JOB_TOKEN -t $IMAGE .
+    docker push $IMAGE
+    echo "IMAGE_TAG=$CI_COMMIT_REF_NAME" >> image.env
+
+build:get_digest:
+  <<: *docker-job
+  <<: *rules-not-tag
+  needs:
+    - job: build:image
+      optional: true
+  stage: build
+  artifacts:
+    reports:
+      dotenv: image.env
+  script: |
+    DIGEST=$(docker manifest inspect $IMAGE -v | grep digest -m 1)
+    echo "IMAGE_TAG=$(echo $(echo ${DIGEST/\"digest\": /} | tr -d \",))" >> image.env
+
+build:spec:
+  <<: *rules-src-tag-config-change
+  image:
+    name: gcr.io/oceanum-registry/dpm:None
+    entrypoint: [""]
+  needs:
+    - job: build:image
+      optional: true
+    - job: build:get_digest
+      optional: true
+  stage: build
+  variables: 
+    IMAGE_TAG: $CI_COMMIT_REF_NAME
+    FF_KUBERNETES_HONOR_ENTRYPOINT: 0
+  tags:
+    - oceanum-dev-runner
+  artifacts:
+    name: "$CI_PROJECT_NAME-$CI_COMMIT_SHORT_SHA-$CI_JOB_NAME"
+    paths:
+      - build
+    expire_in: 1 week
+  script: dpm build --image_tag=$IMAGE_TAG
+
+test:unittest:
+  <<: *rules-src-or-tag-change
+  image: 
+    name: $IMAGE
+    pull_policy: [always]
+  stage: test
+  tags: 
+    - oceanum-dev-runner
+  script: pytest
+
+.deploy-base: &deploy-base
+  image:
+    name: gcr.io/oceanum-registry/git-commiter:v0.3
+  tags:
+    - oceanum-dev-runner
+  stage: deploy
+  script: |
+    # Add check to add pipeline for first time to apps
+    git_deploy replace_dir_hard
+
+.rules-tags: &rules-tags
+  rules:
+    - if: '$CI_COMMIT_TAG && $CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+
+.rules-branches: &rules-branches
+  rules:
+    - if: $CI_COMMIT_BRANCH == $STAGE_DEPLOY_REF
+      changes:
+        - app/**/*
+        - config/**/*
+        - requirements.txt
+        - Dockerfile
+        - .gitlab-ci.yml
+
+# Deployment of App when there are stage changes
+deploy:app:
+  <<: *deploy-base
+  allow_failure: true
+  rules:
+  - if: $CI_COMMIT_BRANCH == "main"
+    changes:
+      - config/argocd/**/*
+      - .gitlab-ci.yml
+  needs:
+    - job: build:spec
+  variables:
+    SOURCE: build/argocd/ricardo-sandbox
+    TARGET: argocd/ricardo-sandbox
+    TARGET_REPO: 'https://gitlab.com/oceanum/config/streamlit-apps.git'
